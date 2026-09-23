@@ -1,33 +1,9 @@
-#pusht
-wheel
-numpy
-pytorch-lightning>=1.7.0,<2.0.0
-torch
+--extra-index-url https://download.pytorch.org/whl/cu124
+
+torch==2.6.0+cu124
 torchvision
-zarr
-diffusers
+torchaudio
+numpy
 tqdm
-gym
-pygame
-pymunk
-shapely
-opencv-python
-scikit-image
-scikit-learn
-scikit-video
-gdown
-
-# flow_pusht
+h5py
 matplotlib
-ipython
-termcolor
-torchdiffeq
-torchsde
-torchdyn
-torchcfm
-
-# BST quality checks
-mako
-lxml
-terminaltables
-pylint>=2.9
