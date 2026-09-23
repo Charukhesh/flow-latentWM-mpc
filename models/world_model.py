@@ -1,31 +1,72 @@
+import os
+import sys
 import torch
 import torch.nn as nn
 
-class MockVisualEncoder(nn.Module):
-    """ Mimics V-JEPA's E_psi """
-    def __init__(self, cond_dim=512):
+# Add the cloned jepa_wms repo to the Python path
+JEPA_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '../external/jepa_wms'))
+if JEPA_PATH not in sys.path:
+    sys.path.insert(0, JEPA_PATH)
+
+# Import Meta's official builders
+from src.models.vision_transformer_v2 import vit_base
+from src.models.ac_predictor import vit_ac_predictor
+
+class VJepaEncoder(nn.Module):
+    def __init__(self, checkpoint_path=None):
         super().__init__()
-        self.cond_dim = cond_dim
+        # Initialize ViT-Base (Patch Size 16, embedding dim 768)
+        self.encoder = vit_base(patch_size=16)
+        
+        # Freeze weights
+        for param in self.encoder.parameters():
+            param.requires_grad = False
+            
+        if checkpoint_path is not None:
+            self.load_checkpoint(checkpoint_path)
 
     def forward(self, image):
-        # image: (B, C, H, W)
-        B = image.shape[0]
-        # Outputs a dummy physics-aware latent vector
-        return torch.randn((B, self.cond_dim), device=image.device)
+        # image shape: (B, 3, 224, 224)
+        # Returns spatial tokens: (B, Num_Patches, 768)
+        tokens = self.encoder(image)
+        return tokens
 
+    def load_checkpoint(self, path):
+        checkpoint = torch.load(path, map_location='cpu')
+        # Meta's weights are usually under 'encoder'
+        self.encoder.load_state_dict(checkpoint['encoder'])
+        print(f"Loaded V-JEPA Encoder weights from {path}")
 
-class MockLatentPredictor(nn.Module):
-    """ Mimics V-JEPA's action-conditioned transition dynamics T_phi """
-    def __init__(self, cond_dim=512, action_dim=7):
+class VJepaPredictor(nn.Module):
+    def __init__(self, action_dim=7, cond_dim=768, checkpoint_path=None):
         super().__init__()
-        self.cond_dim = cond_dim
         
-        # A simple linear layer to simulate latent dynamics
-        self.dynamics = nn.Linear(cond_dim + action_dim, cond_dim)
+        # Initialize Action-Conditioned Predictor
+        self.predictor = vit_ac_predictor(
+            embed_dim=cond_dim, 
+            action_dim=action_dim,
+            predictor_embed_dim=1024,
+            depth=12,
+            num_heads=16,
+            proprio_tokens=0,  # Disable proprioception
+            num_frames=1, # Passing one frame at a time now
+            tubelet_size=1 # Prevents 0x0 attention mask now
+        )
+        
+        # Freeze weights
+        for param in self.predictor.parameters():
+            param.requires_grad = False
 
-    def forward(self, z_t, action):
-        # z_t: (B, cond_dim), action: (B, action_dim)
-        # Concatenate state and action to predict next state
-        x = torch.cat([z_t, action], dim=-1)
-        z_next = z_t + 0.1 * self.dynamics(x) # Residual connection
+    def forward(self, z_tokens, action):
+        """
+        z_tokens: (B, N_patches, cond_dim)
+        action: (B, action_dim) OR (B, T, action_dim)
+        """
+        if action.ndim == 2:
+            action = action.unsqueeze(1) # (B, 1, 7)
+            
+        # Predict next spatial tokens (states=None since proprio_tokens=0)
+        # predictor returns: (x, action_features, proprio_features)
+        z_next, _, _ = self.predictor(x=z_tokens, actions=action, states=None)
+        
         return z_next

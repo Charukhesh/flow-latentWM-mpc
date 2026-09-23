@@ -17,42 +17,38 @@ class FlowLatentPlanner(nn.Module):
 
     @torch.no_grad()
     def forward(self, current_image, goal_image):
-        """
-        Closed-loop MPC step. 
-        Returns the optimal trajectory and the index of the winner.
-        """
         device = current_image.device
         
-        # 1. Encode into Latent Space
-        # z_t shape: (1, cond_dim)
-        z_t = self.visual_encoder(current_image)
-        z_goal = self.visual_encoder(goal_image)
+        # 1. Encode into Spatial Latent Tokens
+        # z_tokens shape: (B, N_Patches, 768)
+        z_tokens = self.visual_encoder(current_image)
+        z_goal_tokens = self.visual_encoder(goal_image)
         
-        # 2. Propose N Trajectories
-        # candidate_actions shape: (N, H_gen, action_dim)
+        # --- THE FIX: Squash spatial tokens into a 1D vector for Flow Matching ---
+        z_flat = z_tokens.mean(dim=1) # Shape: (B, 768)
+        
+        # 2. Propose N Trajectories (Using z_flat)
         candidate_actions = self.flow_model.sample(
-            condition=z_t, 
+            condition=z_flat, 
             num_proposals=self.N, 
             horizon=self.H_gen, 
             action_dim=self.action_dim, 
             num_steps=self.flow_steps
         )
         
-        # 3. Vectorized Latent Verification (Rollout)
-        # Duplicate z_t and z_goal for parallel batch processing
-        z_hat = z_t.repeat(self.N, 1)        # (N, cond_dim)
-        z_goal_batch = z_goal.repeat(self.N, 1) # (N, cond_dim)
+        # 3. Vectorized Latent Verification 
+        # (Using full z_tokens grid so V-JEPA can simulate physics)
+        z_hat = z_tokens.repeat(self.N, 1, 1)           # (N, N_Patches, 768)
+        z_goal_batch = z_goal_tokens.repeat(self.N, 1, 1) # (N, N_Patches, 768)
         
         for j in range(self.H_ver):
-            # Extract the j-th action from all N proposals
             current_actions = candidate_actions[:, j, :] # (N, action_dim)
-            
-            # Predict next latent state for all N futures simultaneously
             z_hat = self.latent_predictor(z_hat, current_actions)
             
-        # 4. Evaluate Cost Function (L1 Distance)
-        # Calculate MAE across the cond_dim -> shape (N,)
-        costs = F.l1_loss(z_hat, z_goal_batch, reduction='none').mean(dim=-1)
+        # 4. Evaluate Cost Function (L1 Distance across all patches)
+        # Flatten the spatial dimension to compute a single scalar cost per trajectory
+        cost_diff = F.l1_loss(z_hat, z_goal_batch, reduction='none')
+        costs = cost_diff.mean(dim=[1, 2]) # Average over patches and features -> (N,)
         
         # 5. Execute 
         best_idx = torch.argmin(costs)

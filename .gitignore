@@ -1,8 +1,19 @@
-# Python
+# Environments and Cache
 __pycache__/
-*.py[cod]
+*.pyc
+.env
+venv/
+env/
+.vscode/
+.idea/
 
-# Model checkpoints
+# Data and Checkpoints (NEVER commit these!)
+data/
+checkpoints/
+plots/
+*.hdf5
 *.pth
 *.pt
-checkpoints/
+
+# External Repositories
+external/

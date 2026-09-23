@@ -1,7 +1,7 @@
 import torch
 import time
 from models.flow_matching import FlowMatchingPolicy
-from models.world_model import MockVisualEncoder, MockLatentPredictor
+from models.world_model import VJepaEncoder, VJepaPredictor
 from models.planner import FlowLatentPlanner
 
 def test_full_pipeline():
@@ -16,12 +16,12 @@ def test_full_pipeline():
         'action_dim': 7,
         'flow_inference_steps': 4
     }
-    cond_dim = 512
+    cond_dim = 768
     
     # Initialize components
     flow_policy = FlowMatchingPolicy(cfg['action_dim'], cond_dim, param_cfg={}).to(device)
-    encoder = MockVisualEncoder(cond_dim).to(device)
-    predictor = MockLatentPredictor(cond_dim, cfg['action_dim']).to(device)
+    encoder = VJepaEncoder().to(device)
+    predictor = VJepaPredictor(action_dim=cfg['action_dim'], cond_dim=cond_dim).to(device)
     
     planner = FlowLatentPlanner(flow_policy, encoder, predictor, cfg).to(device)
     

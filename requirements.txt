@@ -7,3 +7,5 @@ numpy
 tqdm
 h5py
 matplotlib
+einops
+timm
