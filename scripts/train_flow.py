@@ -1,6 +1,5 @@
 import os
 import sys
-# Add root directory to python path so we can import models/data
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
@@ -9,7 +8,15 @@ from tqdm import tqdm
 
 from data.robomimic_dataset import RobomimicDataset
 from models.flow_matching import FlowMatchingPolicy
-from models.world_model import MockVisualEncoder
+
+class DummyEncoder(torch.nn.Module):
+    def __init__(self, cond_dim=1024):
+        super().__init__()
+        self.cond_dim = cond_dim
+        
+    def forward(self, images):
+        # Ignores the image and just outputs a zero-vector of the correct shape
+        return torch.zeros((images.shape[0], self.cond_dim), device=images.device)
 
 def train():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -19,7 +26,7 @@ def train():
     batch_size = 64
     epochs = 20
     action_dim = 7
-    cond_dim = 512
+    cond_dim = 1024
     horizon = 16
     lr = 1e-4
 
@@ -29,7 +36,7 @@ def train():
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=True)
     
     # 3. Models
-    visual_encoder = MockVisualEncoder(cond_dim=cond_dim).to(device)
+    visual_encoder = DummyEncoder(cond_dim=cond_dim).to(device)
     flow_policy = FlowMatchingPolicy(action_dim=action_dim, cond_dim=cond_dim, param_cfg={}).to(device)
     
     # We only train the flow policy for now. (Encoder is theoretically frozen/pre-trained)

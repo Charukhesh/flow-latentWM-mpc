@@ -10,4 +10,8 @@ matplotlib
 einops
 timm
 
+robosuite==1.5.2
+robosuite_models
+mujoco==3.1.6
+imageio
 huggingface_hub

@@ -6,6 +6,7 @@ venv/
 env/
 .vscode/
 .idea/
+MUJOCO_LOG.TXT
 
 # Data and Checkpoints (NEVER commit these!)
 data/
