@@ -9,14 +9,14 @@ if JEPA_PATH not in sys.path:
     sys.path.insert(0, JEPA_PATH)
 
 # Import Meta's official builders
-from src.models.vision_transformer_v2 import vit_base
+from src.models.vision_transformer_v2 import vit_large
 from src.models.ac_predictor import vit_ac_predictor
 
 class VJepaEncoder(nn.Module):
     def __init__(self, checkpoint_path=None):
         super().__init__()
-        # Initialize ViT-Base (Patch Size 16, embedding dim 768)
-        self.encoder = vit_base(patch_size=16)
+        # Initialize ViT-Large (Patch Size 16, embedding dim 1024)
+        self.encoder = vit_large(patch_size=16, img_size=256)
         
         # Freeze weights
         for param in self.encoder.parameters():
@@ -33,12 +33,15 @@ class VJepaEncoder(nn.Module):
 
     def load_checkpoint(self, path):
         checkpoint = torch.load(path, map_location='cpu')
-        # Meta's weights are usually under 'encoder'
-        self.encoder.load_state_dict(checkpoint['encoder'])
-        print(f"Loaded V-JEPA Encoder weights from {path}")
+
+        if 'encoder' in checkpoint:
+            self.encoder.load_state_dict(checkpoint['encoder'], strict=False)
+            print("Loaded V-JEPA Encoder weights.")
+        else:
+            print("Note: No encoder weights found in this checkpoint. (Using random weights for Encoder, this is expected if using DINO).")
 
 class VJepaPredictor(nn.Module):
-    def __init__(self, action_dim=7, cond_dim=768, checkpoint_path=None):
+    def __init__(self, action_dim=7, cond_dim=1024, checkpoint_path=None):
         super().__init__()
         
         # Initialize Action-Conditioned Predictor
@@ -50,7 +53,8 @@ class VJepaPredictor(nn.Module):
             num_heads=16,
             proprio_tokens=0,  # Disable proprioception
             num_frames=1, # Passing one frame at a time now
-            tubelet_size=1 # Prevents 0x0 attention mask now
+            tubelet_size=1, # Prevents 0x0 attention mask now
+            img_size=256
         )
         
         # Freeze weights
@@ -68,5 +72,13 @@ class VJepaPredictor(nn.Module):
         # Predict next spatial tokens (states=None since proprio_tokens=0)
         # predictor returns: (x, action_features, proprio_features)
         z_next, _, _ = self.predictor(x=z_tokens, actions=action, states=None)
-        
         return z_next
+
+    def load_checkpoint(self, path):
+        checkpoint = torch.load(path, map_location='cpu')
+        
+        if 'predictor' in checkpoint:
+            self.predictor.load_state_dict(checkpoint['predictor'], strict=False)
+            print("Loaded Meta's V-JEPA Predictor weights successfully!")
+        else:
+            print("Error: Could not find predictor keys.")
