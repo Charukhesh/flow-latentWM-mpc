@@ -9,36 +9,37 @@ if JEPA_PATH not in sys.path:
     sys.path.insert(0, JEPA_PATH)
 
 # Import Meta's official builders
-from src.models.vision_transformer_v2 import vit_large
 from src.models.ac_predictor import vit_ac_predictor
+
+import torchvision.transforms.functional as TF
 
 class VJepaEncoder(nn.Module):
     def __init__(self, checkpoint_path=None):
         super().__init__()
-        # Initialize ViT-Large (Patch Size 16, embedding dim 1024)
-        self.encoder = vit_large(patch_size=16, img_size=256)
         
-        # Freeze weights
+        print("Loading DINOv2 (ViT-Large) Foundation Model for Vision...")
+        # Automatically downloads and loads Meta's official DINOv2 weights
+        self.encoder = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitl14')
+        
+        # Freeze all weights - DINO already understands the world
         for param in self.encoder.parameters():
             param.requires_grad = False
-            
-        if checkpoint_path is not None:
-            self.load_checkpoint(checkpoint_path)
 
     def forward(self, image):
-        # image shape: (B, 3, 224, 224)
-        # Returns spatial tokens: (B, Num_Patches, 768)
-        tokens = self.encoder(image)
+        """
+        image shape: (B, 3, 256, 256) -> from our simulator
+        """
+        # Resize 256x256 to 224x224 for DINOv2
+        if image.shape[-1] != 224:
+            image = TF.resize(image, (224, 224), antialias=True)
+            
+        # Extract DINO patch tokens
+        # DINO returns a dict. We want the spatial grid, ignoring the CLS token.
+        # Output shape: (B, 256, 1024)
+        features = self.encoder.forward_features(image)
+        tokens = features['x_norm_patchtokens']
+        
         return tokens
-
-    def load_checkpoint(self, path):
-        checkpoint = torch.load(path, map_location='cpu')
-
-        if 'encoder' in checkpoint:
-            self.encoder.load_state_dict(checkpoint['encoder'], strict=False)
-            print("Loaded V-JEPA Encoder weights.")
-        else:
-            print("Note: No encoder weights found in this checkpoint. (Using random weights for Encoder, this is expected if using DINO).")
 
 class VJepaPredictor(nn.Module):
     def __init__(self, action_dim=7, cond_dim=1024, checkpoint_path=None):

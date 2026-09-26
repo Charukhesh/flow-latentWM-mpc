@@ -70,7 +70,7 @@ class ConditionalResidualBlock1D(nn.Module):
             nn.Linear(cond_dim, cond_channels),
             nn.Unflatten(-1, (-1, 1))
         )
-
+        
         self.residual_conv = nn.Conv1d(in_channels, out_channels, 1) \
             if in_channels != out_channels else nn.Identity()
 

@@ -5,6 +5,7 @@ import torch
 import numpy as np
 import robosuite as suite
 from robosuite.controllers import load_composite_controller_config
+import imageio
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from huggingface_hub import hf_hub_download
@@ -23,17 +24,17 @@ def setup_planner(device):
     }
     cond_dim = 1024 
     
-    # Load the real Meta weights we downloaded earlier
+    # Loading Meta weights
     checkpoint_path = hf_hub_download(repo_id="facebook/jepa-wms", filename="jepa_wm_droid.pth.tar")
     
-    # 1. Initialize Flow Matching Proposer
+    # Flow Matching Proposer
     flow_policy = FlowMatchingPolicy(cfg['action_dim'], cond_dim, param_cfg={}).to(device)
     flow_checkpoint = "checkpoints/flow_policy_latest.pth"
     if os.path.exists(flow_checkpoint):
         flow_policy.load_state_dict(torch.load(flow_checkpoint, map_location=device))
         print("Loaded Sine-Wave Flow Matching weights!")
     
-    # 2. Initialize V-JEPA Verifier
+    # V-JEPA Verifier
     encoder = VJepaEncoder(checkpoint_path=checkpoint_path).to(device) 
     predictor = VJepaPredictor(action_dim=cfg['action_dim'], cond_dim=cond_dim, checkpoint_path=checkpoint_path).to(device)
     
@@ -53,7 +54,7 @@ def run_simulation():
         env_name="Lift",               # Task: Lift the block
         robots="Panda",                # Robot: Franka Emika Panda
         controller_configs=controller_config,
-        has_renderer=True,             # Pop up a window to watch the robot
+        has_renderer=False,             # Pop up a window to watch the robot
         has_offscreen_renderer=True,   # Required to get camera images
         use_camera_obs=True,           
         camera_names="agentview",      # The main camera angle
@@ -66,37 +67,43 @@ def run_simulation():
     
     # Create a dummy goal image (In a real setup, this is an image of the block lifted)
     dummy_goal_image = torch.randn((1, 3, 256, 256), device=device)
+
+    # Set up the Video Writer
+    os.makedirs("videos", exist_ok=True)
+    video_path = "videos/robot_dance.mp4"
+    writer = imageio.get_writer(video_path, fps=20)
+    print(f"\nSimulation Running! Saving video to {video_path}...")
     
-    print("\nSimulation Running! (Close the render window to stop)")
     steps = 0
-    
-    while steps < 200:
-        # 1. Get the camera image from the simulator
-        img = obs["agentview_image"] # Shape: (256, 256, 3)
+    while steps < 100:  # Let's run for 100 steps (5 seconds of video)
+        img = obs["agentview_image"] 
         
-        # 2. Convert to PyTorch format (B, C, H, W) and normalize
+        # Save the current frame to our video
+        writer.append_data(img[::-1]) # MuJoCo images are flipped vertically by default
+        
+        # Prepare for neural network
         img_tensor = torch.from_numpy(img).permute(2, 0, 1).unsqueeze(0).float() / 255.0
         img_tensor = img_tensor.to(device)
         
-        # 3. Plan the next move!
         start_time = time.time()
-        with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.float16):
+        
+        # --- BONUS MEMORY FIX: Run in Half-Precision (Autocast) ---
+        with torch.no_grad(), torch.autocast(device_type="cuda" if torch.cuda.is_available() else "cpu"):
             best_trajectory, best_idx, _ = planner(img_tensor, dummy_goal_image)
-            
-            # Extract the very first action from the winning 16-step trajectory
-            action = best_trajectory[0].cpu().numpy() 
+            action = best_trajectory[0].float().cpu().numpy() 
             
         plan_time = (time.time() - start_time) * 1000
         
-        # 4. Execute the action in the simulator
+        # Execute action
         obs, reward, done, info = env.step(action)
-        env.render() # Update the popup window
         
         steps += 1
-        print(f"Step {steps:03d} | Plan Time: {plan_time:.1f} ms | Action: {action[:3].round(2)}...")
+        print(f"Step {steps:03d}/100 | Plan Time: {plan_time:.1f} ms")
 
+    # Close environments and save the video
+    writer.close()
     env.close()
-    print("Simulation finished.")
+    print(f"Simulation finished. Check {video_path} to see your robot!")
 
 if __name__ == "__main__":
     run_simulation()

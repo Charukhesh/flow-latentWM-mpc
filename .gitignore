@@ -12,6 +12,7 @@ MUJOCO_LOG.TXT
 data/
 checkpoints/
 plots/
+videos/
 *.hdf5
 *.pth
 *.pt
