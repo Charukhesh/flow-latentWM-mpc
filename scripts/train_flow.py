@@ -8,6 +8,7 @@ from tqdm import tqdm
 
 from data.robomimic_dataset import RobomimicDataset
 from models.flow_matching import FlowMatchingPolicy
+from models.world_model import VJepaEncoder
 
 class DummyEncoder(torch.nn.Module):
     def __init__(self, cond_dim=1024):
@@ -22,27 +23,28 @@ def train():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Training on device: {device}")
     
-    # 1. Hyperparameters
-    batch_size = 64
+    # Hyperparams
+    batch_size = 16
     epochs = 20
     action_dim = 7
     cond_dim = 1024
     horizon = 16
     lr = 1e-4
 
-    # 2. Dataset & DataLoader
-    dataset_path = "data/sine_image.hdf5"
+    # Dataset & DataLoader
+    dataset_path = "data/lift/ph/robomimic/lift/ph/image.hdf5"
     dataset = RobomimicDataset(dataset_path, horizon=horizon)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=True)
     
-    # 3. Models
-    visual_encoder = DummyEncoder(cond_dim=cond_dim).to(device)
+    # Models
+    print("Loading DINOv2 Vision Encoder...")
+    visual_encoder = VJepaEncoder().to(device)
     flow_policy = FlowMatchingPolicy(action_dim=action_dim, cond_dim=cond_dim, param_cfg={}).to(device)
     
     # We only train the flow policy for now. (Encoder is theoretically frozen/pre-trained)
     optimizer = torch.optim.AdamW(flow_policy.parameters(), lr=lr, weight_decay=1e-6)
     
-    # 4. Training Loop
+    # Training Loop
     print("\nStarting Training...")
     for epoch in range(epochs):
         flow_policy.train()
@@ -53,22 +55,30 @@ def train():
         for images, actions in pbar:
             images = images.to(device)
             actions = actions.to(device)
+
+            # Ensure images are (B, C, H, W)
+            # Robomimic stores them as (B, H, W, 3). Permute to (B, 3, H, W).
+            if images.shape[-1] == 3:
+                images = images.permute(0, 3, 1, 2)
             
             # Zero gradients
             optimizer.zero_grad()
             
-            # Step A: Encode Image (in reality, this would be V-JEPA)
+            # Encode Image (in reality, this would be V-JEPA - DINOv2)
             # images shape: (B, 3, 84, 84) -> z_t shape: (B, cond_dim)
             with torch.no_grad():
-                z_t = visual_encoder(images) 
+                z_tokens = visual_encoder(images)   # Shape: (B, 256, 1024)
+                z_t = z_tokens.mean(dim=1)          # Squash to 1D: (B, 1024)
                 
-            # Step B: Compute ODE Loss
+            # Compute ODE Loss
             # actions shape: (B, horizon, action_dim)
             loss = flow_policy.compute_loss(x1=actions, condition=z_t)
             
-            # Step C: Backprop
+            # Backprop
             loss.backward()
             optimizer.step()
+
+            torch.cuda.empty_cache() # Free up memory cache
             
             epoch_loss += loss.item()
             pbar.set_postfix({"Loss": f"{loss.item():.4f}"})
@@ -78,8 +88,8 @@ def train():
         
     print("\nTraining Complete! Saving checkpoint...")
     os.makedirs("checkpoints", exist_ok=True)
-    torch.save(flow_policy.state_dict(), "checkpoints/flow_policy_latest.pth")
-    print("Checkpoint saved to checkpoints/flow_policy_latest.pth")
+    torch.save(flow_policy.state_dict(), "checkpoints/flow_policy_w_encoder.pth")
+    print("Checkpoint saved to checkpoints/flow_policy_w_encoder.pth")
 
 if __name__ == "__main__":
     train()
