@@ -29,10 +29,10 @@ def setup_planner(device):
     
     # Flow Matching Proposer
     flow_policy = FlowMatchingPolicy(cfg['action_dim'], cond_dim, param_cfg={}).to(device)
-    flow_checkpoint = "checkpoints/flow_policy_latest.pth"
+    flow_checkpoint = "checkpoints/flow_policy_w_encoder.pth"
     if os.path.exists(flow_checkpoint):
         flow_policy.load_state_dict(torch.load(flow_checkpoint, map_location=device))
-        print("Loaded Sine-Wave Flow Matching weights!")
+        print("Loaded V-JEPA Encoder Flow Matching weights trained on Robomimic Data")
     
     # V-JEPA Verifier
     encoder = VJepaEncoder(checkpoint_path=checkpoint_path).to(device) 
@@ -65,17 +65,26 @@ def run_simulation():
     
     obs = env.reset()
     
-    # Create a dummy goal image (In a real setup, this is an image of the block lifted)
-    dummy_goal_image = torch.randn((1, 3, 256, 256), device=device)
+    # Goal Image
+    goal_img_np = imageio.imread("data/goal_image.png") # Shape: (H, W, 3)
+    # PyTorch Format: (B, C, H, W) and normalize to [0, 1]
+    goal_image = torch.from_numpy(goal_img_np).permute(2, 0, 1).unsqueeze(0).float() / 255.0
+    goal_image = goal_image.to(device)
 
     # Set up the Video Writer
     os.makedirs("videos", exist_ok=True)
-    video_path = "videos/robot_dance.mp4"
+    video_path = "videos/robot_lift.mp4"
     writer = imageio.get_writer(video_path, fps=20)
     print(f"\nSimulation Running! Saving video to {video_path}...")
+
+    stats = torch.load("data/action_stats.pth", map_location=device)
+    action_min = stats['min']
+    action_max = stats['max']
     
     steps = 0
-    while steps < 100:  # Let's run for 100 steps (5 seconds of video)
+    max_steps = 1000
+    action_chunk_size = 8
+    while steps < max_steps:  
         img = obs["agentview_image"] 
         
         # Save the current frame to our video
@@ -87,19 +96,30 @@ def run_simulation():
         
         start_time = time.time()
         
-        # --- BONUS MEMORY FIX: Run in Half-Precision (Autocast) ---
+        # Run in Half-Precision (Autocast)
         with torch.no_grad(), torch.autocast(device_type="cuda" if torch.cuda.is_available() else "cpu"):
-            best_trajectory, best_idx, _ = planner(img_tensor, dummy_goal_image)
-            action = best_trajectory[0].float().cpu().numpy() 
+            best_trajectory, best_idx, _ = planner(img_tensor, goal_image)
+
+            # Un-Normalize the Trajectory
+            # From [-1, 1] back to [0, 1]
+            best_trajectory = (best_trajectory + 1.0) / 2.0 
+            # From [0, 1] back to real robot scale
+            best_trajectory = best_trajectory * (action_max - action_min) + action_min
+            
+            action_chunk = best_trajectory[:action_chunk_size].float().cpu().numpy()
             
         plan_time = (time.time() - start_time) * 1000
-        
-        # Execute action
-        obs, reward, done, info = env.step(action)
-        
-        steps += 1
-        print(f"Step {steps:03d}/100 | Plan Time: {plan_time:.1f} ms")
+        print(f"Plan Time: {plan_time:.1f} ms | Executing {action_chunk_size} steps...")
 
+        # Execute the chunk sequentially
+        for i in range(action_chunk_size):
+            if steps >= max_steps:
+                break
+
+            action = action_chunk[i]
+            obs, reward, done, info = env.step(action)
+            steps += 1
+        
     # Close environments and save the video
     writer.close()
     env.close()
