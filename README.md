@@ -7,7 +7,7 @@
 
 Welcome to the official repository for **Flow-Latent MPC**. This project introduces a state-of-the-art "Propose & Verify" architecture for robotic continuous control, marrying the lightning-fast generative capabilities of **Flow Matching** with the physical foresight of **Latent World Models (V-JEPA & DINOv2)**.
 
-📖 **For a complete mathematical breakdown and file-by-file system guide, please see our [Architecture Guide](ARCHITECTURE_GUIDE.md).**
+📖 **For a complete mathematical breakdown and file-by-file system guide, please see our [Architecture Guide](Architecture_Guide.md).**
 
 ## 📖 The Story: Why, What, and How
 
