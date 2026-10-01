@@ -1,63 +1,98 @@
-# 🤖🌊 robot manipulation with flow matching
+# Flow-Latent MPC: Safe Generative Robotic Planning via World Models
 
-![pipeline](images/overall.png "overall")
+<div align="center">
+  <img src="images/overall.png" alt="Architecture Overview" width="100%">
+  <p><i>Original inspiration and Flow Matching foundation by Zhang & Gienger, Honda Research Institute EU. Our framework replaces 2D affordances with Latent World Model verification for 3D physics-aware planning.</i></p>
+</div>
 
-[![Static Badge](https://img.shields.io/badge/arXiv-2409.01083-B31B1B?style=flat-square&logo=arxiv)](https://arxiv.org/abs/2409.01083)
-[![License](https://img.shields.io/pypi/l/cobras?style=flat-square)](https://opensource.org/license/bsd-3-clause)
+Welcome to the official repository for **Flow-Latent MPC**. This project introduces a state-of-the-art "Propose & Verify" architecture for robotic continuous control, marrying the lightning-fast generative capabilities of **Flow Matching** with the physical foresight of **Latent World Models (V-JEPA & DINOv2)**.
 
-A reference implementation for the `Affordance-based Robot Manipulation with Flow Matching`.
+📖 **For a complete mathematical breakdown and file-by-file system guide, please see our [Architecture Guide](ARCHITECTURE_GUIDE.md).**
 
-* Paper page: Affordance-based Robot Manipulation with Flow Matching. https://arxiv.org/abs/2409.01083
-* Project page: https://hri-eu.github.io/flow-matching-policy/
-* Code: https://github.com/HRI-EU/flow_matching
-* Author: Fan Zhang (fan.zhang@honda-ri.de), Michael Gienger
-<!--* <video src="https://github.com/user-attachments/assets/633d6756-a3ff-4fde-aace-bbf5fbd58866" width="300" autoplay loop muted>-->
+## 📖 The Story: Why, What, and How
 
-<p align="center">
-<img src="images/flow.gif" width="900" height="270"/>
-</p>
+### The Problem (Why)
+Standard imitation learning in robotics is inherently **reactive**. A robot looks at a camera frame and blindly predicts the next motor command. While recent breakthroughs in Generative Policies (like Diffusion or Flow Matching) allow robots to model highly complex, multi-modal actions, they still suffer from "blind execution." 
 
-## Key components
-🔬 **This repo contains** \
-Training and evaluation examples of using flow matching on PushT and Franka Kitchen benchmarks.
+If a generative policy is thrown into an out-of-distribution (OOD) scenario, it might confidently generate a trajectory that smashes the robot arm through a table. Previous work (like the Honda Research Institute paper we build upon) utilized 2D visual "affordances" to tell the robot *where* to act. However, 2D heatmaps lack strict 3D physical constraints. **An affordance tells a robot where to look, but a World Model tells a robot what happens if it acts.**
 
-🌷 **Getting Started**
-1. Clone this repo and change into it: `git clone git@github.com:HRI-EU/flow-matching-policy.git && cd flow_matching` \
-2. Install the Python dependencies: `python -m venv venv_fm && source venv_fm/bin/activate && pip install --no-cache-dir -r requirements.txt`
-3. Enjoy!
+### Our Approach (What)
+We introduce **Flow-Latent Model Predictive Control (MPC)**. Instead of blindly executing generative outputs, we shift to a **predictive, temporally-smoothed policy**:
+1. **Propose:** A Flow Matching policy instantly generates $N=16$ diverse, physically plausible candidate trajectories.
+2. **Verify:** A Latent World Model "imagines" the physical consequences of all 16 trajectories in a compressed 3D-aware latent space.
+3. **Execute:** The planner evaluates these imagined futures against the goal, selects the safest path, and executes a smooth chunk of actions to eliminate kinematic jitter.
 
-<!--* Tulip variations with access to a tool library
-  * `MinimalTulipAgent`: Minimal implementation; searches for tools based on the user input directly
-  * `NaiveTulipAgent`: Naive implementation; searches for tools with a separate tool call
-  * `CotTulipAgent`: COT implementation; derives a plan for the necessary steps and searches for suitable tools
-  * `InformedCotTulipAgent`: Same as `CotTulipAgent`, but with a brief description of the tool library's contents
-  * `PrimedCotTulipAgent`: Same as `CotTulipAgent`, but primed with tool names based on an initial search with the user request
-  * `OneShotCotTulipAgent`: Same as `CotTulipAgent`, but the system prompt included a brief example
-  * `AutoTulipAgent`: Fully autonomous variant; can use the search tool at any time and modify its tool library with CRUD operations
-  * `DfsTulipAgent`: DFS inspired variant that leverages a DAG for keeping track of tasks and suitable tools, can create new tools-->
-  
-🏆 **Some Results** \
-Pretrained weights with flow matching: [Push-T](https://drive.google.com/file/d/19A0sdo-OygRE8WnZG8OYkB0nEvsIPY1R/view?usp=sharing), [Franka Kitchen](https://drive.google.com/file/d/1xZg7n7E_z2MK61Estecdr4fUuGSDG1pS/view?usp=sharing), [Robomimic](https://drive.google.com/file/d/1vMl9T_NoEC5sxaXTTRjfBUeAyi44ee6w/view?usp=sharing)
+### The Engine (How)
 
-| Methods       | Push-T<sup>1</sup> | Push-T<sup>2</sup>       | Franka Kitchen | Robomimic<sup>3</sup> |
-| ------------- | ------------- | ------------- | ------------- | ------------- |
-| Flow Matching | 0.9035/0.7519 | 0.7363/0.6218 | 0.9960/0.7425 | 0.9360/0.7289 |
+<div align="center">
+  <img src="images/flow.gif" alt="Flow Matching Process" width="60%">
+  <p><i>Visualization of the Flow Matching ODE vector field. (Credit: Honda Research Institute)</i></p>
+</div>
 
-sampling range<sup>1</sup>: [rs.randint(50, 450), rs.randint(50, 450), rs.randint(200, 300), rs.randint(200, 300), rs.randn() * 2 * np.pi - np.pi]
+To achieve real-time (20Hz+) closed-loop control without memory overflow, our architecture leverages three highly optimized engines:
+1. **Generative Prior (Flow Matching):** We replace slow stochastic diffusion (SDEs) with deterministic Ordinary Differential Equations (ODEs). This allows us to generate 16 candidate trajectories from pure Gaussian noise in just 4 Euler steps.
+2. **Spatial Perception (DINOv2):** We encode simulator images into a rich, 256-patch spatial grid using Meta's frozen `dinov2_vitl14` foundation model.
+3. **Latent Physics (V-JEPA-2-AC):** We utilize Meta's Action-Conditioned World Model (trained on the massive DROID dataset) to roll out future spatial states conditioned on the Flow Matcher's 7D motor proposals. 
 
-sampling range<sup>2</sup>: [rs.randint(50, 450), rs.randint(50, 450), rs.randint(100, 400), rs.randint(100, 400), rs.randn() * 2 * np.pi - np.pi]
+## 🛠️ Repository Structure
 
-Robomimic<sup>3</sup>: transport task ph
+```text
+flow-latentWM-mpc/
+│
+├── data/
+│   └── robomimic_dataset.py      # Sliding-window dataset loader
+│
+├── models/
+│   ├── flow_matching.py          # The Proposer: ODE Flow Matching Mathematics
+│   ├── planner.py                # The Brain: Latent MPC, Cost Evaluation & Action Chunking
+│   ├── unet.py                   # 1D Conditional U-Net for ODE Flow (FiLM conditioned)
+│   └── world_model.py            # The Verifier: DINOv2 Encoder + V-JEPA Predictor
+│
+├── scripts/
+│   ├── evaluate_flow.py          # Plots multi-modal generative trajectory proposals
+│   ├── evaluate_robomimic.py     # Headless MuJoCo evaluation & video rendering
+│   ├── extract_goal.py           # Extracts the success frame from human demonstrations
+│   └── train_flow.py             # Behavioral Cloning training loop for the U-Net
+│
+├── Architecture_Guide.md         # Detailed mathematical and codebase documentation
+├── download_real_data.py         # Automated Hugging Face mirror downloader
+├── README.md                     # Project story, credits, and setup guide
+└── requirements.txt              # Minimal project dependencies
+```
 
-📝 **Acknowledgements** 
-* The model structure implementation is modified from Cheng Chi's [diffusion_policy](https://github.com/real-stanford/diffusion_policy) repo. The code is under external/diffusion_policy (MIT license). Some code that we modified is located under external/models.
-* We use some functions from Alexander Tong's [TorchCFM](https://github.com/atong01/conditional-flow-matching) repo (MIT license). It is installed through pip.
-* Please download the PushT and robomimic demonstration data from Cheng Chi's 
-[diffusion_policy](https://github.com/real-stanford/diffusion_policy) repo. 
-* Please download the Franka Kitchen demonstration data from Nur Muhammad Shafiullah's 
-[Behavior Transformers](https://mahis.life/bet/) repo (MIT license).
+## Quick Start
 
+**1. Install Dependencies**
+We recommend using a conda environment with Python 3.10.
+```bash
+conda create -n flowwm_mpc python=3.10 -y
+conda activate flowwm_mpc
+conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia
+pip install -r requirements.txt
+```
 
-## License
+**2. Download the Robomimic Dataset**
+Download the Proficient Human (`ph`) Lift dataset into the `data/` folder.
+```bash
+python download_real_data.py
+```
 
-This project is licensed under the BSD 3-clause license - see the [LICENSE.md](LICENSE.md) file for details
+**3. Train the Flow Matcher**
+Train the generative ODE prior on the 7D robot demonstrations. Action normalization is handled automatically.
+```bash
+python scripts/train_flow.py
+```
+
+**4. Evaluate in MuJoCo**
+Launch the headless simulator. The script will automatically download the V-JEPA and DINOv2 weights from PyTorch Hub/Hugging Face, run the Propose & Verify MPC loop, and save a high-quality `.mp4` video to the `videos/` folder.
+```bash
+python scripts/evaluate_robomimic.py
+```
+
+## 🙏 Acknowledgements and Credits
+
+This research builds upon the incredible open-source contributions of several labs:
+
+* **Flow Matching & Conceptual Inspiration:** The base generative architecture, `ConditionalUnet1D` backbone, and explanatory graphics (`images/overall.png`, `images/flow.gif`) are credited to the foundational work by Fan Zhang and Michael Gienger at the **Honda Research Institute EU**: *"Affordance-based Robot Manipulation with Flow Matching"*.
+* **World Models & Foundation Models:** The Latent WAM verifier utilizes the `V-JEPA-2-AC` and `DINOv2` architectures provided by **Meta FAIR**. 
+* **Simulation & Data:** Physical evaluation and expert demonstration datasets are provided by the **Robosuite** and **Robomimic** frameworks (Stanford Vision and Learning Lab / UT Austin).

@@ -25,7 +25,7 @@ def train():
     
     # Hyperparams
     batch_size = 16
-    epochs = 20
+    epochs = 200
     action_dim = 7
     cond_dim = 1024
     horizon = 16

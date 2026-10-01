@@ -85,10 +85,8 @@ def run_simulation():
     max_steps = 1000
     action_chunk_size = 8
     while steps < max_steps:  
-        img = obs["agentview_image"] 
-        
-        # Save the current frame to our video
-        writer.append_data(img[::-1]) # MuJoCo images are flipped vertically by default
+        # Flip the image upright and copy to memory
+        img = obs["agentview_image"][::-1].copy() 
         
         # Prepare for neural network
         img_tensor = torch.from_numpy(img).permute(2, 0, 1).unsqueeze(0).float() / 255.0
@@ -118,6 +116,13 @@ def run_simulation():
 
             action = action_chunk[i]
             obs, reward, done, info = env.step(action)
+
+            if reward == 1.0:
+                print(f"TASK SUCCESS at step {steps}!")
+                break
+
+            # Save the current frame to our video from MuJoCo
+            writer.append_data(obs["agentview_image"][::-1].copy())
             steps += 1
         
     # Close environments and save the video
